@@ -183,6 +183,7 @@ class InteractiveUI:
 
         # Create and run real-time search
         rts = RealTimeSearch(smart_searcher, self.extractor)
+        rts.search_dir = self.extractor.claude_dir  # Use custom claude_dir if set
         selected_file = rts.run()
 
         if selected_file:

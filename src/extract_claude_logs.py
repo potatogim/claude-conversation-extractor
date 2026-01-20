@@ -9,9 +9,13 @@ readable markdown files.
 
 import argparse
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+# Environment variable for custom Claude projects directory
+CLAUDE_PROJECTS_DIR_ENV = "CLAUDE_PROJECTS_DIR"
 
 
 class ClaudeConversationExtractor:
@@ -19,7 +23,9 @@ class ClaudeConversationExtractor:
 
     def __init__(self, output_dir: Optional[Path] = None):
         """Initialize the extractor with Claude's directory and output location."""
-        self.claude_dir = Path.home() / ".claude" / "projects"
+        # Check environment variable for custom claude directory
+        env_claude_dir = os.environ.get(CLAUDE_PROJECTS_DIR_ENV)
+        self.claude_dir = Path(env_claude_dir) if env_claude_dir else Path.home() / ".claude" / "projects"
 
         if output_dir:
             self.output_dir = Path(output_dir)
@@ -735,6 +741,9 @@ Examples:
         "--output", type=str, help="Output directory for markdown files"
     )
     parser.add_argument(
+        "--claude-dir", type=str, help="Claude projects directory (default: ~/.claude/projects)"
+    )
+    parser.add_argument(
         "--limit", type=int, help="Limit for --list command (default: show all)", default=None
     )
     parser.add_argument(
@@ -789,6 +798,10 @@ Examples:
 
     args = parser.parse_args()
 
+    # Set environment variable if --claude-dir is specified
+    if getattr(args, 'claude_dir', None):
+        os.environ[CLAUDE_PROJECTS_DIR_ENV] = args.claude_dir
+
     # Handle interactive mode
     if args.interactive or (args.export and args.export.lower() == "logs"):
         from interactive_ui import main as interactive_main
@@ -839,6 +852,7 @@ Examples:
         print(f"🔍 Searching for: {query}")
         results = searcher.search(
             query=query,
+            search_dir=extractor.claude_dir,
             mode=mode,
             date_from=date_from,
             date_to=date_to,
@@ -967,16 +981,29 @@ Examples:
 def launch_interactive():
     """Launch the interactive UI directly, or handle search if specified."""
     import sys
-    
-    # If no arguments provided, launch interactive UI
-    if len(sys.argv) == 1:
+
+    # Parse --claude-dir option from sys.argv and set environment variable
+    for i, arg in enumerate(sys.argv):
+        if arg == '--claude-dir' and i + 1 < len(sys.argv):
+            os.environ[CLAUDE_PROJECTS_DIR_ENV] = sys.argv[i + 1]
+            break
+        elif arg.startswith('--claude-dir='):
+            os.environ[CLAUDE_PROJECTS_DIR_ENV] = arg.split('=', 1)[1]
+            break
+
+    # Filter out --claude-dir from arguments for logic check
+    claude_dir_value = os.environ.get(CLAUDE_PROJECTS_DIR_ENV)
+    args_without_claude_dir = [a for a in sys.argv[1:] if not a.startswith('--claude-dir') and a != claude_dir_value]
+
+    # If no arguments provided (or only --claude-dir), launch interactive UI
+    if not args_without_claude_dir:
         try:
             from .interactive_ui import main as interactive_main
         except ImportError:
             from interactive_ui import main as interactive_main
         interactive_main()
     # Check if 'search' was passed as an argument
-    elif len(sys.argv) > 1 and sys.argv[1] == 'search':
+    elif 'search' in args_without_claude_dir:
         # Launch real-time search with viewing capability
         try:
             from .realtime_search import RealTimeSearch, create_smart_searcher
@@ -984,20 +1011,21 @@ def launch_interactive():
         except ImportError:
             from realtime_search import RealTimeSearch, create_smart_searcher
             from search_conversations import ConversationSearcher
-        
+
         # Initialize components
         extractor = ClaudeConversationExtractor()
         searcher = ConversationSearcher()
         smart_searcher = create_smart_searcher(searcher)
-        
+
         # Run search
         rts = RealTimeSearch(smart_searcher, extractor)
+        rts.search_dir = extractor.claude_dir
         selected_file = rts.run()
-        
+
         if selected_file:
             # View the selected conversation
             extractor.display_conversation(selected_file)
-            
+
             # Offer to extract
             try:
                 extract_choice = input("\n📤 Extract this conversation? (y/N): ").strip().lower()
